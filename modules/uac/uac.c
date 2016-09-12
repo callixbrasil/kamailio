@@ -19,6 +19,17 @@
  *
  */
 
+/*!
+ * \file
+ * \brief Kamailio uac :: The SIP UA client module
+ * \ingroup uac
+ * Module: \ref uac
+ */
+
+/*! \defgroup uac The SIP UA Client module
+ *
+ */
+
 
 #include <stdio.h>
 #include <string.h>
@@ -84,6 +95,7 @@ static int w_replace_to(struct sip_msg* msg, char* p1, char* p2);
 static int w_restore_to(struct sip_msg* msg);
 static int w_uac_auth(struct sip_msg* msg, char* str, char* str2);
 static int w_uac_reg_lookup(struct sip_msg* msg,  char* src, char* dst);
+static int w_uac_reg_status(struct sip_msg* msg,  char* src, char* dst);
 static int w_uac_reg_request_to(struct sip_msg* msg,  char* src, char* mode_s);
 static int fixup_replace_uri(void** param, int param_no);
 static int mod_init(void);
@@ -105,24 +117,22 @@ static cmd_export_t cmds[]={
 		REQUEST_ROUTE | BRANCH_ROUTE },
 	{"uac_replace_from",  (cmd_function)w_replace_from,  1, fixup_replace_uri, 0,
 		REQUEST_ROUTE | BRANCH_ROUTE },
-	{"uac_restore_from",  (cmd_function)w_restore_from,  0,                  0, 0,
+	{"uac_restore_from",  (cmd_function)w_restore_from,  0,		  0, 0,
 		REQUEST_ROUTE },
 	{"uac_replace_to",  (cmd_function)w_replace_to,  2, fixup_replace_uri, 0,
 		REQUEST_ROUTE | BRANCH_ROUTE },
 	{"uac_replace_to",  (cmd_function)w_replace_to,  1, fixup_replace_uri, 0,
 		REQUEST_ROUTE | BRANCH_ROUTE },
-	{"uac_restore_to",  (cmd_function)w_restore_to,  0, 0, 0,
-		REQUEST_ROUTE },
-	{"uac_auth",          (cmd_function)w_uac_auth,       0,                  0, 0,
-		FAILURE_ROUTE },
-	{"uac_req_send",  (cmd_function)w_uac_req_send,       0,                  0, 0,
-		ANY_ROUTE},
+	{"uac_restore_to",  (cmd_function)w_restore_to,  0, 0, 0, REQUEST_ROUTE },
+	{"uac_auth",	  (cmd_function)w_uac_auth,       0, 0, 0, FAILURE_ROUTE },
+	{"uac_req_send",  (cmd_function)w_uac_req_send,   0, 0, 0, ANY_ROUTE},
 	{"uac_reg_lookup",  (cmd_function)w_uac_reg_lookup,  2, fixup_pvar_pvar,
 		fixup_free_pvar_pvar, ANY_ROUTE },
+	{"uac_reg_status",  (cmd_function)w_uac_reg_status,  1, fixup_pvar_pvar, 0,
+		ANY_ROUTE },
 	{"uac_reg_request_to",  (cmd_function)w_uac_reg_request_to,  2, fixup_pvar_uint, fixup_free_pvar_uint,
 		REQUEST_ROUTE | FAILURE_ROUTE | BRANCH_ROUTE },
-	{"bind_uac", (cmd_function)bind_uac,                  1,                  0, 0,
-		0},
+	{"bind_uac", (cmd_function)bind_uac,		  1,  0, 0, 0},
 	{0,0,0,0,0,0}
 };
 
@@ -130,22 +140,24 @@ static cmd_export_t cmds[]={
 
 /* Exported parameters */
 static param_export_t params[] = {
-	{"rr_from_store_param", PARAM_STR,				&rr_from_param       },
-	{"rr_to_store_param",   PARAM_STR,				&rr_to_param       },
-	{"restore_mode",        PARAM_STRING,				&restore_mode_str      },
-	{"restore_dlg",         INT_PARAM,				&uac_restore_dlg       },
-	{"restore_passwd",      PARAM_STR,				&uac_passwd          },
-	{"restore_from_avp",	PARAM_STR,				&restore_from_avp },
-	{"restore_to_avp",		PARAM_STR,				&restore_to_avp },
-	{"credential",        PARAM_STRING|USE_FUNC_PARAM, (void*)&add_credential },
-	{"auth_username_avp", PARAM_STRING,                &auth_username_avp     },
-	{"auth_realm_avp",    PARAM_STRING,                &auth_realm_avp        },
-	{"auth_password_avp", PARAM_STRING,                &auth_password_avp     },
-	{"reg_db_url",        PARAM_STR,                &reg_db_url          },
-	{"reg_db_table",      PARAM_STR,                &reg_db_table        },
-	{"reg_contact_addr",  PARAM_STR,                &reg_contact_addr    },
-	{"reg_timer_interval", INT_PARAM,               &reg_timer_interval	},
-	{"reg_retry_interval", INT_PARAM,               &reg_retry_interval    },
+	{"rr_from_store_param", PARAM_STR,			&rr_from_param       },
+	{"rr_to_store_param",   PARAM_STR,			&rr_to_param       },
+	{"restore_mode",	PARAM_STRING,			&restore_mode_str      },
+	{"restore_dlg",	 	INT_PARAM,			&uac_restore_dlg       },
+	{"restore_passwd",      PARAM_STR,			&uac_passwd	  },
+	{"restore_from_avp",	PARAM_STR,			&restore_from_avp },
+	{"restore_to_avp",	PARAM_STR,			&restore_to_avp },
+	{"credential",		PARAM_STRING|USE_FUNC_PARAM,	(void*)&add_credential },
+	{"auth_username_avp",	PARAM_STRING,			&auth_username_avp     },
+	{"auth_realm_avp",	PARAM_STRING,			&auth_realm_avp	},
+	{"auth_password_avp",	PARAM_STRING,			&auth_password_avp     },
+	{"reg_db_url",		PARAM_STR,			&reg_db_url	  },
+	{"reg_db_table",	PARAM_STR,			&reg_db_table	},
+	{"reg_contact_addr",	PARAM_STR,			&reg_contact_addr    },
+	{"reg_timer_interval",	INT_PARAM,			&reg_timer_interval	},
+	{"reg_retry_interval",	INT_PARAM,	  		&reg_retry_interval    },
+	{"reg_keep_callid",	INT_PARAM,			&reg_keep_callid       },
+	{"reg_random_delay",	INT_PARAM,			&reg_random_delay      },
 	{0, 0, 0}
 };
 
@@ -156,10 +168,10 @@ struct module_exports exports= {
 	DEFAULT_DLFLAGS, /* dlopen flags */
 	cmds,       /* exported functions */
 	params,     /* param exports */
-	0,          /* exported statistics */
-	0,          /* exported MI functions */
+	0,	  /* exported statistics */
+	0,	  /* exported MI functions */
 	mod_pvs,    /* exported pseudo-variables */
-	0,          /* extra processes */
+	0,	  /* extra processes */
 	mod_init,   /* module initialization function */
 	0,
 	mod_destroy,
@@ -423,14 +435,16 @@ int w_replace_from(struct sip_msg* msg, char* p1, char* p2)
 	/* p1 display , p2 uri */
 
 	if ( p1!=NULL ) {
-		if(pv_printf_s( msg, (pv_elem_p)p1, &dsp_s)!=0)
+		if(pv_printf_s( msg, (pv_elem_p)p1, &dsp_s)!=0) {
 			return -1;
+		}
 		dsp = &dsp_s;
 	}
 
 	/* compute the URI string; if empty string -> make it NULL */
-	if (pv_printf_s( msg, (pv_elem_p)p2, &uri_s)!=0)
+	if (pv_printf_s( msg, (pv_elem_p)p2, &uri_s)!=0) {
 		return -1;
+	}
 	uri = uri_s.len?&uri_s:NULL;
 
 	if (parse_from_header(msg)<0 ) {
@@ -557,6 +571,27 @@ static int w_uac_reg_lookup(struct sip_msg* msg,  char* src, char* dst)
 		return -1;
 	}
 	return uac_reg_lookup(msg, &val.rs, dpv, 0);
+}
+
+
+static int w_uac_reg_status(struct sip_msg* msg,  char* src, char* dst)
+{
+	pv_spec_t *spv;
+	pv_value_t val;
+
+	spv = (pv_spec_t*)src;
+	if(pv_get_spec_value(msg, spv, &val) != 0)
+	{
+		LM_ERR("cannot get src uri value\n");
+		return -1;
+	}
+
+	if (!(val.flags & PV_VAL_STR))
+	{
+	    LM_ERR("src pv value is not string\n");
+	    return -1;
+	}
+	return uac_reg_status(msg, &val.rs, 0);
 }
 
 
